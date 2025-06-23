@@ -2,7 +2,7 @@
     <!-- https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core -->
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
-        <ServerTargetFramework>net10.0</ServerTargetFramework>
+        <ServerTargetFramework>net8.0</ServerTargetFramework>
 
         <RollForward>major</RollForward>
         <ImplicitUsings>enable</ImplicitUsings>
