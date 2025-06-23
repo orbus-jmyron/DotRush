@@ -16,17 +16,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	Interop.initialize(context.extensionPath);
 
 	if (vscode.workspace.workspaceFolders !== undefined) {
-		StateController.activate(context);
-		StatusBarController.activate(context);
-		ContextMenuController.activate(context);
+		//StateController.activate(context);
+		//StatusBarController.activate(context);
+		//ContextMenuController.activate(context);
 		TestExplorerController.activate(context);
 		LanguageServerController.activate(context);
 	}
 
-	DebugAdapterController.activate(context);
-	ModulesView.feature.activate(context);
-	PerformanceView.feature.activate(context);
-	ExternalTypeResolver.feature.activate(context);
+	//DebugAdapterController.activate(context);
+	//ModulesView.feature.activate(context);
+	//PerformanceView.feature.activate(context);
+	//ExternalTypeResolver.feature.activate(context);
 
 	return exports;
 }
