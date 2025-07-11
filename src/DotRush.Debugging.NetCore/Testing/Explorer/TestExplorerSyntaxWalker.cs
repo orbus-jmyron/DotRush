@@ -77,7 +77,7 @@ public abstract class TestExplorerSyntaxWalker {
             var hasTestAttribute = node.AttributeLists.Any(p => p.Attributes.Any(a => a.Name.ToString().EndsWith("Test", StringComparison.InvariantCulture)));
             var hasTestCaseAttribute = node.AttributeLists.Any(p => p.Attributes.Any(a => a.Name.ToString().EndsWith("TestCase", StringComparison.InvariantCulture)));
             // MSTest
-            var hasTestMethodAttribute = node.AttributeLists.Any(p => p.Attributes.Any(a => a.Name.ToString().EndsWith("TestMethod", StringComparison.InvariantCulture)));
+            var hasTestMethodAttribute = node.AttributeLists.Any(p => p.Attributes.Any(a => a.Name.ToString().Contains("TestMethod", StringComparison.InvariantCulture)));
             
             return hasFactAttribute || hasTheoryAttribute || hasTestAttribute || hasTestCaseAttribute || hasTestMethodAttribute;
         });

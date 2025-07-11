@@ -20,17 +20,18 @@ export async function activate(context: vscode.ExtensionContext) {
 		StatusBarController.activate(context);
 		ContextMenuController.activate(context);
 		TestExplorerController.activate(context);
-		LanguageServerController.activate(context);
+		// LanguageServerController.activate(context);
 	}
 
 	DebugAdapterController.activate(context);
-	ModulesView.feature.activate(context);
-	PerformanceView.feature.activate(context);
-	ExternalTypeResolver.feature.activate(context);
+	// ModulesView.feature.activate(context);
+	// PerformanceView.feature.activate(context);
+	// ExternalTypeResolver.feature.activate(context);
 
 	return exports;
 }
 export function deactivate() {
 	StateController.deactivate();
-	LanguageServerController.stop();
+	TestExplorerController.unloadProjects();
+	//LanguageServerController.stop();
 }

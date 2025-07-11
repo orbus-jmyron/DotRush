@@ -14,6 +14,8 @@ export class TestExplorerController {
     private static controller: vscode.TestController;
     private static testsResultDirectory: string;
     private static runSettingsStatusBarItem: vscode.StatusBarItem;
+    private static discoveryStatusBarItem: vscode.StatusBarItem;
+    private static fileWatcher: vscode.FileSystemWatcher | undefined;
 
     public static activate(context: vscode.ExtensionContext) {
         TestExplorerController.testsResultDirectory = path.join(context.extensionPath, "extension", "bin", "TestExplorer");
@@ -26,6 +28,10 @@ export class TestExplorerController {
         TestExplorerController.runSettingsStatusBarItem.command = res.commandIdSelectRunSettingsFile;
         context.subscriptions.push(TestExplorerController.runSettingsStatusBarItem);
         
+        // Create a status bar item to show test discovery progress
+        TestExplorerController.discoveryStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+        context.subscriptions.push(TestExplorerController.discoveryStatusBarItem);
+        
         // Update the status bar to show the currently selected .runsettings file
         TestExplorerController.updateTestControllerDescription();
 
@@ -35,6 +41,13 @@ export class TestExplorerController {
         context.subscriptions.push(TestExplorerController.controller);
         context.subscriptions.push(TestExplorerController.controller.createRunProfile(res.testExplorerProfileRun, vscode.TestRunProfileKind.Run, TestExplorerController.runTests, true));
         context.subscriptions.push(TestExplorerController.controller.createRunProfile(res.testExplorerProfileDebug, vscode.TestRunProfileKind.Debug, TestExplorerController.debugTests, true));
+        
+        // Initialize test projects discovery
+        TestExplorerController.discoverTestProjects();
+        
+        // Set up file watchers for project changes
+        TestExplorerController.setupFileWatchers(context);
+        
         /* Experimental API */
         if (Extensions.getSetting(res.configIdTestExplorerAutoRefreshTests)) {
             context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(ev => {
@@ -62,6 +75,129 @@ export class TestExplorerController {
     public static unloadProjects() {
         TestExplorerController.controller.items.replace([]);
     }
+    
+    /**
+     * Discovers test projects in the workspace and loads them
+     */
+    public static async discoverTestProjects(): Promise<void> {
+        // Clear existing projects
+        TestExplorerController.unloadProjects();
+        
+        try {
+            // Get all project files in the workspace
+            const projectFiles = await Extensions.getProjectFiles();
+            
+            // Filter for test projects
+            const testProjects = projectFiles.filter(project => {
+                const projectName = path.basename(project, '.csproj');
+                return projectName.includes('Test') || projectName.includes('test');
+            });
+            
+            // Set up variables to track discovery progress
+            let projectsToDiscover = testProjects.length > 0 ? testProjects : projectFiles;
+            let completedProjects = 0;
+            const totalProjects = projectsToDiscover.length;
+            
+            // Show initial status
+            if (totalProjects > 0) {
+                TestExplorerController.updateDiscoveryStatus(completedProjects, totalProjects);
+                TestExplorerController.discoveryStatusBarItem.show();
+            }
+            
+            // Function to increment the completed count and update status
+            const onProjectDiscovered = () => {
+                completedProjects++;
+                TestExplorerController.updateDiscoveryStatus(completedProjects, totalProjects);
+                
+                // Hide the status bar when all projects are discovered
+                if (completedProjects >= totalProjects) {
+                    // Keep the message visible for a moment before hiding
+                    setTimeout(() => {
+                        TestExplorerController.discoveryStatusBarItem.hide();
+                    }, 3000);
+                }
+            };
+            
+            // Load each test project
+            if (testProjects.length > 0) {
+                return Extensions.parallelForEach(testProjects, async (projectFile) => {
+                    await TestExplorerController.loadProject(projectFile);
+                    onProjectDiscovered();
+                });
+            }
+            
+            // If no test projects found by naming convention, try loading all projects
+            if (testProjects.length === 0 && projectFiles.length > 0) {
+                return Extensions.parallelForEach(projectFiles, async (projectFile) => {
+                    await TestExplorerController.loadProject(projectFile);
+                    onProjectDiscovered();
+                });
+            }
+        } catch (error) {
+            console.error('Error discovering test projects:', error);
+            TestExplorerController.discoveryStatusBarItem.hide();
+        }
+    }
+    
+    /**
+     * Sets up file watchers to detect changes to project files
+     */
+    private static setupFileWatchers(context: vscode.ExtensionContext): void {
+        // Watch for changes to .csproj files
+        TestExplorerController.fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.csproj');
+        
+        // When a project file is created, check if it's a test project and load it
+        context.subscriptions.push(TestExplorerController.fileWatcher.onDidCreate(async uri => {
+            const projectPath = uri.fsPath;
+            const projectName = path.basename(projectPath, '.csproj');
+            if (projectName.includes('Test') || projectName.includes('test')) {
+                await TestExplorerController.loadProject(projectPath);
+            }
+        }));
+        
+        // When a project file is changed, reload it if it's already loaded
+        context.subscriptions.push(TestExplorerController.fileWatcher.onDidChange(async uri => {
+            const projectPath = uri.fsPath;
+            const projectName = path.basename(projectPath, '.csproj');
+            
+            // Check if this project is already loaded
+            let isLoaded = false;
+            TestExplorerController.controller.items.forEach(item => {
+                if (item.uri?.fsPath === projectPath) {
+                    isLoaded = true;
+                }
+            });
+            
+            if (isLoaded) {
+                await TestExplorerController.loadProject(projectPath);
+            }
+        }));
+        
+        // When a project file is deleted, remove it from the test explorer
+        context.subscriptions.push(TestExplorerController.fileWatcher.onDidDelete(uri => {
+            const projectPath = uri.fsPath;
+            const projectName = path.basename(projectPath, '.csproj');
+            
+            // Remove the project from the test explorer
+            TestExplorerController.controller.items.forEach(item => {
+                if (item.uri?.fsPath === projectPath) {
+                    TestExplorerController.controller.items.delete(item.id);
+                }
+            });
+        }));
+        
+        context.subscriptions.push(TestExplorerController.fileWatcher);
+    }
+    
+    /**
+     * Deactivate the test explorer controller
+     */
+    public static deactivate(): void {
+        if (TestExplorerController.fileWatcher) {
+            TestExplorerController.fileWatcher.dispose();
+        }
+        TestExplorerController.unloadProjects();
+    }
 
     private static async refreshTests(): Promise<void> {
         await vscode.workspace.saveAll();
@@ -71,6 +207,14 @@ export class TestExplorerController {
         return Extensions.parallelForEach(projectFiles, async (projectFile) => await TestExplorerController.loadProject(projectFile));
     }
     private static async runTests(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+        await TestExplorerController.runOrDebugTests(request, token, false);
+    }
+
+    private static async debugTests(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+        await TestExplorerController.runOrDebugTests(request, token, true);
+    }
+
+    private static runOrDebugTests(request: vscode.TestRunRequest, token: vscode.CancellationToken, debug: boolean) {
         TestExplorerController.convertTestRequest(request).forEach(async (filters, project) => {
             const preLaunchTask = await Extensions.getTask(Extensions.getSetting<string>(res.configIdTestExplorerPreLaunchTask));
             const testReport = path.join(TestExplorerController.testsResultDirectory, `${project.id}.trx`);
@@ -83,7 +227,7 @@ export class TestExplorerController {
             // Add runsettings file if configured
             const runSettingsFile = StateController.getLocal<string>('testRunSettingsFile');
             if (runSettingsFile && fs.existsSync(runSettingsFile)) {
-                testArguments.append('--settings').append(`"${runSettingsFile}"`);
+                testArguments.append('--settings').append(`\"${runSettingsFile}\"`);
             }
 
             testArguments.conditional('--no-build', () => preLaunchTask !== undefined);
@@ -107,32 +251,51 @@ export class TestExplorerController {
                 }
             }
             
-            await Extensions.waitForTask(DotNetTaskProvider.getTestTask(project.uri!.fsPath, testArguments));
-            await TestExplorerController.publishTestResults(testRun, project, testReport);
-        });
-    }
-    private static async debugTests(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
-        TestExplorerController.convertTestRequest(request).forEach(async (filters, project) => {
-            const preLaunchTask = await Extensions.getTask(Extensions.getSetting<string>(res.configIdTestExplorerPreLaunchTask));
-            const executionSuccess = await Extensions.waitForTask(preLaunchTask ?? DotNetTaskProvider.getBuildTask(project.uri!.fsPath));
-            if (!executionSuccess || token.isCancellationRequested)
-                return;
 
-            // Check if a .runsettings file is configured
-            const runSettingsFile = StateController.getLocal<string>('testRunSettingsFile');
-            let additionalArgs = '';
-            
-            if (runSettingsFile && fs.existsSync(runSettingsFile)) {
-                additionalArgs = `--settings "${runSettingsFile}"`;
+            const task = DotNetTaskProvider.getTestTask(project.uri!.fsPath, testArguments, debug ? { VSTEST_HOST_DEBUG: "1" } : undefined);
+            if (debug) {     
+                const options: vscode.ShellExecutionOptions = { executable: "pwsh", shellArgs: ["-Command"], cwd: Extensions.getCurrentWorkingDirectory() };
+                
+                const tempTask = new vscode.Task(
+                    { type: res.taskDefinitionId, args: testArguments?.getArguments() }, 
+                    vscode.TaskScope.Workspace, 
+                    'Build',
+                    res.extensionId,
+                    new vscode.ShellExecution(`dotnet --version`, options),
+                    `$${res.microsoftProblemMatcherId}`
+                );
+
+                // run a temp task, as there is a bug with VSCodium where if a task opens a new terminal the shell integration is working
+                await Extensions.waitForTask(tempTask);
+
+                const startTerminalEvent = vscode.window.onDidStartTerminalShellExecution(async (startEvent) => {
+                    if (startEvent.terminal.name !== "Build") {
+                        return;
+                    }
+
+                    const stream = startEvent.execution.read();
+                    const regex = new RegExp(/Process Id: (\d+)/);
+
+                    for await (const data of stream) {
+                        const match = regex.exec(data);
+                        if (match && match.length > 1) {
+                            const processId = match[1];
+                            await vscode.debug.startDebugging(Extensions.getWorkspaceFolder(), {
+                                name: res.testExplorerProfileDebug,
+                                type: res.debuggerNetCoreId,
+                                processId: processId,
+                                request: 'attach',
+                            });
+                            break;
+                        }
+                    }
+
+                    startTerminalEvent.dispose();
+                });
             }
-
-            const processId = await Interop.runTestHost(project.uri!.fsPath, filters.join('|'), additionalArgs);
-            await vscode.debug.startDebugging(Extensions.getWorkspaceFolder(), {
-                name: res.testExplorerProfileDebug,
-                type: res.debuggerNetCoreId,
-                processId: processId,
-                request: 'attach',
-            });
+            
+            await Extensions.waitForTask(task);
+            await TestExplorerController.publishTestResults(testRun, project, testReport);
         });
     }
 
@@ -232,41 +395,44 @@ export class TestExplorerController {
         }
 
         // Create quick pick items for each .runsettings file
-        const items: vscode.QuickPickItem[] = runSettingsFiles.map(file => {
-            const relativePath = vscode.workspace.asRelativePath(file.fsPath);
-            return {
-                label: path.basename(file.fsPath),
-                description: relativePath,
-                detail: file.fsPath
-            };
-        });
+        const items: vscode.QuickPickItem[] = [
+            {
+                label: 'Select .runsettings file',
+                description: '',
+                detail: 'select'
+            },
+            {
+                label: '$(clear-all) Clear .runsettings file selection',
+                description: '',
+                detail: 'clear'
+            }
+        ];
 
-        // Add an option to clear the current selection
-        items.unshift({
-            label: '$(clear-all) Clear .runsettings file selection',
-            description: '',
-            detail: ''
-        });
+        const result = await vscode.window.showQuickPick(items);
 
-        // Show quick pick to select a .runsettings file
-        const selectedItem = await vscode.window.showQuickPick(items, {
-            placeHolder: 'Select a .runsettings file to use for test runs',
-            title: 'Select .runsettings File',
-        });
-
-        if (!selectedItem) {
-            return; // User cancelled the selection
-        }
-
-        if (selectedItem.detail === '') {
-            // User selected to clear the current selection
+        if (result?.detail === "clear")
+        {
+            // clear file
             StateController.putLocal('testRunSettingsFile', '');
-            vscode.window.showInformationMessage('Cleared .runsettings file selection.');
-        } else {
-            // User selected a .runsettings file
-            StateController.putLocal('testRunSettingsFile', selectedItem.detail);
-            vscode.window.showInformationMessage(`Selected .runsettings file: ${selectedItem.label}`);
+            vscode.window.showInformationMessage('.runsettings file cleared.');
         }
+        else
+        {
+            // Show file picker to select a .runsettings file
+            const file = await vscode.window.showOpenDialog({ 
+                title: 'Select .runsettings File',
+                canSelectMany: false, 
+                filters: { 'runsettings': [ 'runsettings' ] }
+            });
+            if (!file || file.length === 0) return;
+
+            const selectedItem = file[0].fsPath;
+
+            // User selected a .runsettings file
+            StateController.putLocal('testRunSettingsFile', selectedItem);
+            vscode.window.showInformationMessage(`Selected .runsettings file: ${selectedItem}`);
+        }
+        
         
         // Update the test controller description to show the currently selected .runsettings file
         TestExplorerController.updateTestControllerDescription();
@@ -281,13 +447,21 @@ export class TestExplorerController {
         if (runSettingsFile && fs.existsSync(runSettingsFile)) {
             // Show the selected .runsettings file in the status bar
             const fileName = path.basename(runSettingsFile);
-            TestExplorerController.runSettingsStatusBarItem.text = `$(settings-gear) ${fileName}`;
+            TestExplorerController.runSettingsStatusBarItem.text = `$(beaker) ${fileName}`;
             TestExplorerController.runSettingsStatusBarItem.tooltip = `Selected .runsettings file: ${runSettingsFile}\nClick to change`;
             TestExplorerController.runSettingsStatusBarItem.show();
         } else {
             // No .runsettings file selected
             TestExplorerController.runSettingsStatusBarItem.hide();
         }
+    }
+    
+    /**
+     * Updates the status bar item to show test discovery progress
+     */
+    private static updateDiscoveryStatus(completed: number, total: number): void {
+        TestExplorerController.discoveryStatusBarItem.text = `$(beaker) Discovering Tests: ${Math.round(completed / total * 100)}%`;
+        TestExplorerController.discoveryStatusBarItem.tooltip = `${completed} of ${total} projects have finished discovering tests`;
     }
 
     private static publishTestResults(testRun: vscode.TestRun, project: vscode.TestItem, testReport: string): Promise<void> {

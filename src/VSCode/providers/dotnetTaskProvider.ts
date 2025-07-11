@@ -31,8 +31,8 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
         ];
     }
 
-    public static getTestTask(projectFile: string, builder: ProcessArgumentBuilder | undefined = undefined): vscode.Task {
-        return DotNetTaskProvider.getTask({ type: res.taskDefinitionId, args: builder?.getArguments() }, projectFile, DotNetTarget.Test, StatusBarController.activeConfiguration);
+    public static getTestTask(projectFile: string, builder: ProcessArgumentBuilder | undefined = undefined, env?: { [key: string]: string }): vscode.Task {
+        return DotNetTaskProvider.getTask({ type: res.taskDefinitionId, args: builder?.getArguments() }, projectFile, DotNetTarget.Test, StatusBarController.activeConfiguration, undefined, env);
     }
     public static getBuildTask(projectFile: string): vscode.Task {
         return DotNetTaskProvider.getTask({ type: res.taskDefinitionId }, projectFile, DotNetTarget.Build, StatusBarController.activeConfiguration);
@@ -44,8 +44,9 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
         return DotNetTaskProvider.getTask({ type: res.taskDefinitionId }, projectFile, DotNetTarget.Clean);
     }
 
-    private static getTask(definition: vscode.TaskDefinition, projectPath: string, target: DotNetTarget, configuration: string | undefined = undefined, framework: string | undefined = undefined): vscode.Task {
-        const options: vscode.ShellExecutionOptions = { cwd: Extensions.getCurrentWorkingDirectory() };
+    private static getTask(definition: vscode.TaskDefinition, projectPath: string, target: DotNetTarget, configuration: string | undefined = undefined, framework: string | undefined = undefined, env?: { [key: string]: string }): vscode.Task {
+       
+        const options: vscode.ShellExecutionOptions = { executable: "pwsh", shellArgs: ["-Command"], cwd: Extensions.getCurrentWorkingDirectory(), env };
         const builder = new ProcessArgumentBuilder('dotnet')
             .append(target).append(projectPath)
             .conditional(`-p:Configuration=${configuration}`, () => configuration !== undefined)
